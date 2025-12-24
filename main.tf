@@ -1,4 +1,17 @@
-resource "aws_s3_bucket" "test_bucket" {
-  bucket = "amr-terraform-test-bucket"
-  force_destroy = true
+terraform {
+  required_version = ">= 0.11.0"
+}
+
+provider "aws" {
+  region = "${var.aws_region}"
+}
+
+resource "aws_instance" "ubuntu" {
+  ami           = "${var.ami_id}"
+  instance_type = "${var.instance_type}"
+  availability_zone = "${var.aws_region}a"
+
+  tags {
+    Name = "${var.name}"
+  }
 }
