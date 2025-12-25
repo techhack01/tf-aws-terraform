@@ -1,4 +1,4 @@
-# EKS Cluster Terraform Configurations.
+# EKS Cluster Terraform Configurations
 
 This Terraform configuration creates a complete Amazon EKS cluster in the us-east-1 region with the following components:
 
