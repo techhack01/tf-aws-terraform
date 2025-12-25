@@ -12,6 +12,17 @@ provider "aws" {
   region = var.aws_region
 }
 
+terraform { 
+  cloud { 
+    
+    organization = "aws-ia2" 
+
+    workspaces { 
+      name = "tf-aws-terraform" 
+    } 
+  } 
+}
+
 # Data sources
 data "aws_availability_zones" "available" {
   filter {
