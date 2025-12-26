@@ -57,3 +57,18 @@ variable "min_capacity" {
   type        = number
   default     = 1
 }
+variable "ami_type" {
+  description = "Type of Amazon Machine Image (AMI) associated with the EKS Node Group"
+  type        = string
+  default     = "AL2_x86_64"
+  validation {
+    condition = contains([
+      "AL2_x86_64",
+      "AL2_x86_64_GPU",
+      "AL2_ARM_64",
+      "AL2023_x86_64_STANDARD",
+      "AL2023_ARM_64_STANDARD"
+    ], var.ami_type)
+    error_message = "AMI type must be one of: AL2_x86_64, AL2_x86_64_GPU, AL2_ARM_64, AL2023_x86_64_STANDARD, AL2023_ARM_64_STANDARD."
+  }
+}

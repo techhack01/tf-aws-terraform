@@ -263,6 +263,8 @@ resource "aws_eks_node_group" "eks_nodes" {
   node_role_arn   = aws_iam_role.eks_node_role.arn
   subnet_ids      = aws_subnet.private[*].id
 
+  # AMI configuration
+  ami_type       = var.ami_type
   capacity_type  = var.capacity_type
   instance_types = var.instance_types
 
@@ -286,6 +288,8 @@ resource "aws_eks_node_group" "eks_nodes" {
 
   tags = {
     Name = "${var.cluster_name}-nodes"
+    AMIType = var.ami_type
+    KubernetesVersion = var.kubernetes_version
   }
 }
 
