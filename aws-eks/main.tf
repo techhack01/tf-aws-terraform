@@ -311,8 +311,20 @@ resource "aws_eks_addon" "kube_proxy" {
 }
 # EKS Access Entry for root user
 resource "aws_eks_access_entry" "root_user" {
-  cluster_name      = aws_eks_cluster.eks_cluster.name
-  principal_arn     = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
-  kubernetes_groups = ["system:masters"]
-  type             = "STANDARD"
+  cluster_name  = aws_eks_cluster.eks_cluster.name
+  principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+  type          = "STANDARD"
+}
+
+# Associate admin policy with root user
+resource "aws_eks_access_policy_association" "root_user_admin" {
+  cluster_name  = aws_eks_cluster.eks_cluster.name
+  principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.root_user]
 }
