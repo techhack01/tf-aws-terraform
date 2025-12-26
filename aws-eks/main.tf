@@ -309,3 +309,10 @@ resource "aws_eks_addon" "kube_proxy" {
   cluster_name = aws_eks_cluster.eks_cluster.name
   addon_name   = "kube-proxy"
 }
+# EKS Access Entry for root user
+resource "aws_eks_access_entry" "root_user" {
+  cluster_name      = aws_eks_cluster.eks_cluster.name
+  principal_arn     = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+  kubernetes_groups = ["system:masters"]
+  type             = "STANDARD"
+}
