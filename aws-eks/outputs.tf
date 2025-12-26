@@ -56,3 +56,18 @@ output "public_subnets" {
   description = "List of IDs of public subnets"
   value       = aws_subnet.public[*].id
 }
+output "node_group_ami_type" {
+  description = "AMI type used by the EKS Node Group"
+  value       = aws_eks_node_group.eks_nodes.ami_type
+}
+
+output "cluster_configuration" {
+  description = "EKS cluster configuration summary"
+  value = {
+    cluster_name       = aws_eks_cluster.eks_cluster.name
+    kubernetes_version = aws_eks_cluster.eks_cluster.version
+    ami_type          = aws_eks_node_group.eks_nodes.ami_type
+    node_instance_types = aws_eks_node_group.eks_nodes.instance_types
+    node_capacity_type = aws_eks_node_group.eks_nodes.capacity_type
+  }
+}
