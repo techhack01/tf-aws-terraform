@@ -246,6 +246,11 @@ resource "aws_eks_cluster" "eks_cluster" {
     public_access_cidrs     = [var.workstation_cidr]
   }
 
+  # Enable access entries authentication mode
+  access_config {
+    authentication_mode = "API_AND_CONFIG_MAP"
+  }
+
   enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
 
   depends_on = [
@@ -308,23 +313,4 @@ resource "aws_eks_addon" "coredns" {
 resource "aws_eks_addon" "kube_proxy" {
   cluster_name = aws_eks_cluster.eks_cluster.name
   addon_name   = "kube-proxy"
-}
-# EKS Access Entry for root user
-resource "aws_eks_access_entry" "root_user" {
-  cluster_name  = aws_eks_cluster.eks_cluster.name
-  principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
-  type          = "STANDARD"
-}
-
-# Associate admin policy with root user
-resource "aws_eks_access_policy_association" "root_user_admin" {
-  cluster_name  = aws_eks_cluster.eks_cluster.name
-  principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
-  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-
-  access_scope {
-    type = "cluster"
-  }
-
-  depends_on = [aws_eks_access_entry.root_user]
 }
