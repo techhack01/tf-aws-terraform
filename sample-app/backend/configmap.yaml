@@ -1,0 +1,252 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-code
+  namespace: sample-app
+data:
+  server.js: |
+    const http = require('http');
+    const url = require('url');
+    const { Client } = require('pg');
+    
+    const PORT = process.env.PORT || 3000;
+    const VERSION = '1.0.0';
+    
+    // Database configuration
+    const dbConfig = {
+      host: process.env.DB_HOST || 'postgres-service',
+      port: process.env.DB_PORT || 5432,
+      database: process.env.DB_NAME || 'sampleapp',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || 'password'
+    };
+    
+    let dbClient;
+    let isReady = false;
+    let requestCount = 0;
+    let errorCount = 0;
+    
+    // Initialize database connection
+    async function initDatabase() {
+      try {
+        dbClient = new Client(dbConfig);
+        await dbClient.connect();
+        
+        // Create table if not exists
+        await dbClient.query(`
+          CREATE TABLE IF NOT EXISTS requests (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            endpoint VARCHAR(255),
+            node_name VARCHAR(255),
+            pod_name VARCHAR(255),
+            pod_ip VARCHAR(255)
+          )
+        `);
+        
+        console.log('Database connected and initialized');
+        isReady = true;
+      } catch (error) {
+        console.error('Database connection failed:', error);
+        isReady = false;
+      }
+    }
+    
+    // Log request to database
+    async function logRequest(endpoint) {
+      if (dbClient) {
+        try {
+          await dbClient.query(
+            'INSERT INTO requests (endpoint, node_name, pod_name, pod_ip) VALUES ($1, $2, $3, $4)',
+            [endpoint, process.env.NODE_NAME, process.env.POD_NAME, process.env.POD_IP]
+          );
+        } catch (error) {
+          console.error('Failed to log request:', error);
+        }
+      }
+    }
+    
+    // HTTP server
+    const server = http.createServer(async (req, res) => {
+      const parsedUrl = url.parse(req.url, true);
+      const path = parsedUrl.pathname;
+      
+      // CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      
+      if (req.method === 'OPTIONS') {
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+      
+      requestCount++;
+      
+      try {
+        switch (path) {
+          case '/health':
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              status: 'healthy',
+              version: VERSION,
+              timestamp: new Date().toISOString(),
+              uptime: process.uptime(),
+              requests: requestCount,
+              errors: errorCount,
+              node: process.env.NODE_NAME,
+              pod: process.env.POD_NAME
+            }));
+            break;
+            
+          case '/ready':
+            if (isReady) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                status: 'ready',
+                database: 'connected',
+                version: VERSION
+              }));
+            } else {
+              res.writeHead(503, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                status: 'not ready',
+                database: 'disconnected'
+              }));
+            }
+            break;
+            
+          case '/db-health':
+            if (dbClient) {
+              try {
+                const result = await dbClient.query('SELECT COUNT(*) as connections FROM pg_stat_activity');
+                await logRequest('/db-health');
+                
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  status: 'connected',
+                  connections: result.rows[0].connections,
+                  version: VERSION,
+                  timestamp: new Date().toISOString()
+                }));
+              } catch (error) {
+                throw error;
+              }
+            } else {
+              throw new Error('Database not connected');
+            }
+            break;
+            
+          case '/node-info':
+            await logRequest('/node-info');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              nodeName: process.env.NODE_NAME || 'unknown',
+              podName: process.env.POD_NAME || 'unknown',
+              podIP: process.env.POD_IP || 'unknown',
+              namespace: 'sample-app',
+              version: VERSION,
+              uptime: process.uptime(),
+              timestamp: new Date().toISOString()
+            }));
+            break;
+            
+          case '/metrics':
+            await logRequest('/metrics');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              totalRequests: requestCount,
+              totalErrors: errorCount,
+              uptime: process.uptime(),
+              memoryUsage: process.memoryUsage(),
+              version: VERSION,
+              node: process.env.NODE_NAME,
+              pod: process.env.POD_NAME
+            }));
+            break;
+            
+          case '/stress':
+            // Simulate some CPU work for stress testing
+            const start = Date.now();
+            let result = 0;
+            while (Date.now() - start < 100) { // 100ms of work
+              result += Math.random();
+            }
+            
+            await logRequest('/stress');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              message: 'Stress test completed',
+              duration: Date.now() - start,
+              result: result,
+              version: VERSION
+            }));
+            break;
+            
+          case '/error':
+            // Intentional error for testing
+            errorCount++;
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              error: 'Intentional error for testing',
+              version: VERSION,
+              timestamp: new Date().toISOString()
+            }));
+            break;
+            
+          default:
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              error: 'Not found',
+              path: path,
+              version: VERSION
+            }));
+        }
+      } catch (error) {
+        errorCount++;
+        console.error('Request error:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: error.message,
+          version: VERSION,
+          timestamp: new Date().toISOString()
+        }));
+      }
+    });
+    
+    // Graceful shutdown
+    process.on('SIGTERM', async () => {
+      console.log('Received SIGTERM, shutting down gracefully');
+      server.close(() => {
+        if (dbClient) {
+          dbClient.end();
+        }
+        process.exit(0);
+      });
+    });
+    
+    // Start server
+    server.listen(PORT, () => {
+      console.log(`Backend server running on port ${PORT}`);
+      console.log(`Version: ${VERSION}`);
+      console.log(`Node: ${process.env.NODE_NAME}`);
+      console.log(`Pod: ${process.env.POD_NAME}`);
+      
+      // Initialize database connection
+      initDatabase();
+    });
+  
+  package.json: |
+    {
+      "name": "sample-backend",
+      "version": "1.0.0",
+      "description": "Sample backend for EKS upgrade testing",
+      "main": "server.js",
+      "dependencies": {
+        "pg": "^8.7.1"
+      },
+      "scripts": {
+        "start": "node server.js"
+      }
+    }

@@ -1,0 +1,326 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: sample-app
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Readiness check endpoint
+        location /ready {
+            access_log off;
+            return 200 "ready\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # API proxy to backend
+        location /api/ {
+            proxy_pass http://backend-service:3000/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # Timeout settings
+            proxy_connect_timeout 5s;
+            proxy_send_timeout 10s;
+            proxy_read_timeout 10s;
+        }
+        
+        # Static content
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+            try_files $uri $uri/ /index.html;
+            
+            # Add headers for debugging
+            add_header X-Pod-Name $hostname;
+            add_header X-Node-Name $http_x_node_name;
+        }
+        
+        # Error pages
+        error_page 500 502 503 504 /50x.html;
+        location = /50x.html {
+            root /usr/share/nginx/html;
+        }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-content
+  namespace: sample-app
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>EKS Blue-Green Upgrade Test App</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #f5f5f5;
+            }
+            .container {
+                background: white;
+                padding: 30px;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }
+            .status {
+                padding: 10px;
+                margin: 10px 0;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            .healthy { background-color: #d4edda; color: #155724; }
+            .unhealthy { background-color: #f8d7da; color: #721c24; }
+            .info { background-color: #d1ecf1; color: #0c5460; }
+            button {
+                background-color: #007bff;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                cursor: pointer;
+                margin: 5px;
+            }
+            button:hover { background-color: #0056b3; }
+            #metrics {
+                margin-top: 20px;
+                font-family: monospace;
+                background-color: #f8f9fa;
+                padding: 15px;
+                border-radius: 5px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🚀 EKS Blue-Green Upgrade Test Application</h1>
+            
+            <div class="info">
+                <strong>Purpose:</strong> This application tests zero-downtime EKS upgrades using Blue-Green node group strategy.
+            </div>
+            
+            <h2>Application Status</h2>
+            <div id="frontend-status" class="status">Checking frontend...</div>
+            <div id="backend-status" class="status">Checking backend...</div>
+            <div id="database-status" class="status">Checking database...</div>
+            
+            <h2>Node Information</h2>
+            <div id="node-info" class="info">Loading node information...</div>
+            
+            <h2>Actions</h2>
+            <button onclick="runHealthCheck()">🔍 Run Health Check</button>
+            <button onclick="loadTest()">⚡ Start Load Test</button>
+            <button onclick="stressTest()">💪 Stress Test</button>
+            <button onclick="clearMetrics()">🧹 Clear Metrics</button>
+            
+            <h2>Real-time Metrics</h2>
+            <div id="metrics">
+                <div>Response Time: <span id="response-time">-</span>ms</div>
+                <div>Success Rate: <span id="success-rate">-</span>%</div>
+                <div>Total Requests: <span id="total-requests">0</span></div>
+                <div>Failed Requests: <span id="failed-requests">0</span></div>
+                <div>Current Node: <span id="current-node">-</span></div>
+            </div>
+        </div>
+        
+        <script>
+            let totalRequests = 0;
+            let failedRequests = 0;
+            let responseTimes = [];
+            
+            // Auto-refresh status every 5 seconds
+            setInterval(runHealthCheck, 5000);
+            
+            // Initial load
+            runHealthCheck();
+            loadNodeInfo();
+            
+            async function runHealthCheck() {
+                await checkFrontend();
+                await checkBackend();
+                await checkDatabase();
+                updateMetrics();
+            }
+            
+            async function checkFrontend() {
+                try {
+                    const start = Date.now();
+                    const response = await fetch('/health');
+                    const responseTime = Date.now() - start;
+                    responseTimes.push(responseTime);
+                    totalRequests++;
+                    
+                    if (response.ok) {
+                        document.getElementById('frontend-status').className = 'status healthy';
+                        document.getElementById('frontend-status').textContent = '✅ Frontend: Healthy';
+                    } else {
+                        throw new Error('Frontend unhealthy');
+                    }
+                } catch (error) {
+                    failedRequests++;
+                    totalRequests++;
+                    document.getElementById('frontend-status').className = 'status unhealthy';
+                    document.getElementById('frontend-status').textContent = '❌ Frontend: Unhealthy';
+                }
+            }
+            
+            async function checkBackend() {
+                try {
+                    const start = Date.now();
+                    const response = await fetch('/api/health');
+                    const responseTime = Date.now() - start;
+                    responseTimes.push(responseTime);
+                    totalRequests++;
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        document.getElementById('backend-status').className = 'status healthy';
+                        document.getElementById('backend-status').textContent = `✅ Backend: Healthy (${data.version})`;
+                    } else {
+                        throw new Error('Backend unhealthy');
+                    }
+                } catch (error) {
+                    failedRequests++;
+                    totalRequests++;
+                    document.getElementById('backend-status').className = 'status unhealthy';
+                    document.getElementById('backend-status').textContent = '❌ Backend: Unhealthy';
+                }
+            }
+            
+            async function checkDatabase() {
+                try {
+                    const start = Date.now();
+                    const response = await fetch('/api/db-health');
+                    const responseTime = Date.now() - start;
+                    responseTimes.push(responseTime);
+                    totalRequests++;
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        document.getElementById('database-status').className = 'status healthy';
+                        document.getElementById('database-status').textContent = `✅ Database: Connected (${data.connections} connections)`;
+                    } else {
+                        throw new Error('Database unhealthy');
+                    }
+                } catch (error) {
+                    failedRequests++;
+                    totalRequests++;
+                    document.getElementById('database-status').className = 'status unhealthy';
+                    document.getElementById('database-status').textContent = '❌ Database: Disconnected';
+                }
+            }
+            
+            async function loadNodeInfo() {
+                try {
+                    const response = await fetch('/api/node-info');
+                    const data = await response.json();
+                    document.getElementById('node-info').innerHTML = `
+                        <strong>Pod:</strong> ${data.podName}<br>
+                        <strong>Node:</strong> ${data.nodeName}<br>
+                        <strong>Namespace:</strong> ${data.namespace}<br>
+                        <strong>Version:</strong> ${data.version}
+                    `;
+                    document.getElementById('current-node').textContent = data.nodeName;
+                } catch (error) {
+                    document.getElementById('node-info').textContent = 'Unable to load node information';
+                }
+            }
+            
+            function updateMetrics() {
+                const avgResponseTime = responseTimes.length > 0 
+                    ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
+                    : 0;
+                const successRate = totalRequests > 0 
+                    ? Math.round(((totalRequests - failedRequests) / totalRequests) * 100)
+                    : 100;
+                
+                document.getElementById('response-time').textContent = avgResponseTime;
+                document.getElementById('success-rate').textContent = successRate;
+                document.getElementById('total-requests').textContent = totalRequests;
+                document.getElementById('failed-requests').textContent = failedRequests;
+                
+                // Keep only last 100 response times
+                if (responseTimes.length > 100) {
+                    responseTimes = responseTimes.slice(-100);
+                }
+            }
+            
+            async function loadTest() {
+                alert('Starting 60-second load test...');
+                const endTime = Date.now() + 60000; // 1 minute
+                
+                while (Date.now() < endTime) {
+                    await Promise.all([
+                        checkFrontend(),
+                        checkBackend(),
+                        checkDatabase()
+                    ]);
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second interval
+                }
+                
+                alert('Load test completed!');
+            }
+            
+            async function stressTest() {
+                alert('Starting 30-second stress test with high concurrency...');
+                const endTime = Date.now() + 30000; // 30 seconds
+                
+                while (Date.now() < endTime) {
+                    // Fire multiple concurrent requests
+                    const promises = [];
+                    for (let i = 0; i < 10; i++) {
+                        promises.push(checkFrontend());
+                        promises.push(checkBackend());
+                        promises.push(checkDatabase());
+                    }
+                    await Promise.all(promises);
+                    await new Promise(resolve => setTimeout(resolve, 500)); // 0.5 second interval
+                }
+                
+                alert('Stress test completed!');
+            }
+            
+            function clearMetrics() {
+                totalRequests = 0;
+                failedRequests = 0;
+                responseTimes = [];
+                updateMetrics();
+            }
+        </script>
+    </body>
+    </html>
+  50x.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Service Temporarily Unavailable</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+            .error { color: #d32f2f; }
+        </style>
+    </head>
+    <body>
+        <h1 class="error">Service Temporarily Unavailable</h1>
+        <p>The application is currently being upgraded. Please try again in a few moments.</p>
+        <p><em>This page indicates the upgrade process is in progress.</em></p>
+    </body>
+    </html>

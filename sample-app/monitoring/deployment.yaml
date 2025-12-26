@@ -1,0 +1,233 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring
+  namespace: sample-app
+  labels:
+    app: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring
+  template:
+    metadata:
+      labels:
+        app: monitoring
+    spec:
+      containers:
+      - name: monitoring
+        image: busybox:1.35
+        command: ["/bin/sh"]
+        args: ["/scripts/monitor.sh"]
+        
+        volumeMounts:
+        - name: monitoring-scripts
+          mountPath: /scripts
+        
+        # Environment variables
+        env:
+        - name: FRONTEND_URL
+          value: "http://frontend-service"
+        - name: BACKEND_URL
+          value: "http://backend-service:3000"
+        - name: CHECK_INTERVAL
+          value: "5"
+        
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+      
+      volumes:
+      - name: monitoring-scripts
+        configMap:
+          name: monitoring-scripts
+          defaultMode: 0755
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-scripts
+  namespace: sample-app
+data:
+  monitor.sh: |
+    #!/bin/sh
+    
+    echo "Starting continuous monitoring..."
+    echo "Frontend URL: $FRONTEND_URL"
+    echo "Backend URL: $BACKEND_URL"
+    echo "Check interval: ${CHECK_INTERVAL}s"
+    
+    # Install curl if not available
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "Installing curl..."
+        apk add --no-cache curl
+    fi
+    
+    # Counters
+    total_checks=0
+    failed_checks=0
+    consecutive_failures=0
+    max_consecutive_failures=0
+    
+    # Log file
+    LOG_FILE="/tmp/monitoring.log"
+    echo "$(date): Monitoring started" > $LOG_FILE
+    
+    while true; do
+        timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+        total_checks=$((total_checks + 1))
+        
+        # Check frontend health
+        frontend_status="OK"
+        if ! curl -s -f --max-time 10 "$FRONTEND_URL/health" >/dev/null 2>&1; then
+            frontend_status="FAIL"
+            failed_checks=$((failed_checks + 1))
+            consecutive_failures=$((consecutive_failures + 1))
+        else
+            consecutive_failures=0
+        fi
+        
+        # Check backend health
+        backend_status="OK"
+        if ! curl -s -f --max-time 10 "$BACKEND_URL/health" >/dev/null 2>&1; then
+            backend_status="FAIL"
+            failed_checks=$((failed_checks + 1))
+            consecutive_failures=$((consecutive_failures + 1))
+        else
+            if [ "$frontend_status" = "OK" ]; then
+                consecutive_failures=0
+            fi
+        fi
+        
+        # Check backend database connection
+        db_status="OK"
+        if ! curl -s -f --max-time 10 "$BACKEND_URL/db-health" >/dev/null 2>&1; then
+            db_status="FAIL"
+            failed_checks=$((failed_checks + 1))
+            consecutive_failures=$((consecutive_failures + 1))
+        else
+            if [ "$frontend_status" = "OK" ] && [ "$backend_status" = "OK" ]; then
+                consecutive_failures=0
+            fi
+        fi
+        
+        # Update max consecutive failures
+        if [ $consecutive_failures -gt $max_consecutive_failures ]; then
+            max_consecutive_failures=$consecutive_failures
+        fi
+        
+        # Calculate success rate
+        success_rate=0
+        if [ $total_checks -gt 0 ]; then
+            success_rate=$(( (total_checks - failed_checks) * 100 / total_checks ))
+        fi
+        
+        # Log status
+        status_line="$timestamp | Frontend: $frontend_status | Backend: $backend_status | DB: $db_status | Success Rate: ${success_rate}% | Consecutive Failures: $consecutive_failures"
+        echo "$status_line"
+        echo "$status_line" >> $LOG_FILE
+        
+        # Alert on consecutive failures
+        if [ $consecutive_failures -ge 3 ]; then
+            echo "ALERT: $consecutive_failures consecutive failures detected!"
+            echo "$(date): ALERT - $consecutive_failures consecutive failures" >> $LOG_FILE
+        fi
+        
+        # Show summary every 60 checks (5 minutes)
+        if [ $((total_checks % 60)) -eq 0 ]; then
+            echo "=== SUMMARY (Last 5 minutes) ==="
+            echo "Total checks: $total_checks"
+            echo "Failed checks: $failed_checks"
+            echo "Success rate: ${success_rate}%"
+            echo "Max consecutive failures: $max_consecutive_failures"
+            echo "================================"
+        fi
+        
+        sleep $CHECK_INTERVAL
+    done
+  
+  load-test.sh: |
+    #!/bin/sh
+    
+    echo "Starting load test..."
+    
+    # Install curl if not available
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "Installing curl..."
+        apk add --no-cache curl
+    fi
+    
+    FRONTEND_URL=${FRONTEND_URL:-"http://frontend-service"}
+    BACKEND_URL=${BACKEND_URL:-"http://backend-service:3000"}
+    DURATION=${DURATION:-60}
+    CONCURRENT=${CONCURRENT:-5}
+    
+    echo "Frontend URL: $FRONTEND_URL"
+    echo "Backend URL: $BACKEND_URL"
+    echo "Duration: ${DURATION}s"
+    echo "Concurrent requests: $CONCURRENT"
+    
+    # Endpoints to test
+    endpoints="
+    $FRONTEND_URL/health
+    $BACKEND_URL/health
+    $BACKEND_URL/db-health
+    $BACKEND_URL/node-info
+    $BACKEND_URL/metrics
+    "
+    
+    start_time=$(date +%s)
+    end_time=$((start_time + DURATION))
+    
+    total_requests=0
+    failed_requests=0
+    
+    while [ $(date +%s) -lt $end_time ]; do
+        # Start concurrent requests
+        pids=""
+        
+        for i in $(seq 1 $CONCURRENT); do
+            for endpoint in $endpoints; do
+                (
+                    if curl -s -f --max-time 5 "$endpoint" >/dev/null 2>&1; then
+                        echo "SUCCESS"
+                    else
+                        echo "FAILURE"
+                    fi
+                ) &
+                pids="$pids $!"
+                total_requests=$((total_requests + 1))
+            done
+        done
+        
+        # Wait for all requests to complete
+        for pid in $pids; do
+            if wait $pid; then
+                result=$(wait $pid 2>/dev/null || echo "FAILURE")
+                if [ "$result" = "FAILURE" ]; then
+                    failed_requests=$((failed_requests + 1))
+                fi
+            else
+                failed_requests=$((failed_requests + 1))
+            fi
+        done
+        
+        # Brief pause
+        sleep 1
+        
+        # Show progress
+        elapsed=$(($(date +%s) - start_time))
+        remaining=$((DURATION - elapsed))
+        success_rate=$(( (total_requests - failed_requests) * 100 / total_requests ))
+        echo "Progress: ${elapsed}s/${DURATION}s | Requests: $total_requests | Failures: $failed_requests | Success: ${success_rate}%"
+    done
+    
+    echo "Load test completed!"
+    echo "Total requests: $total_requests"
+    echo "Failed requests: $failed_requests"
+    echo "Success rate: $(( (total_requests - failed_requests) * 100 / total_requests ))%"
